@@ -1,0 +1,46 @@
+{
+  "name": "Vlog 横屏",
+  "description": "横屏 16:9 · 适合 YouTube/B站/电脑端播放",
+  "output": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "codec": "libx264",
+    "format": "mp4"
+  },
+  "video_track": {
+    "clip_duration_min": 5,
+    "clip_duration_max": 8,
+    "transition_duration": 0.5,
+    "transition_type": "crossfade"
+  },
+  "subtitle_track": {
+    "enabled": true,
+    "font": "C:/Windows/Fonts/msyh.ttc",
+    "font_size": 48,
+    "stroke_width": 3,
+    "max_width_ratio": 0.85
+  },
+  "title": {
+    "enabled": true,
+    "font": "C:/Windows/Fonts/msyhbd.ttc",
+    "font_size": 80,
+    "duration": 2.5,
+    "fade_duration": 0.6,
+    "background_color": [20, 20, 30]
+  },
+  "music": {
+    "volume": 0.4,
+    "fade_in": 1.0,
+    "fade_out": 2.0
+  },
+  "ending": {
+    "enabled": true,
+    "font": "C:/Windows/Fonts/msyh.ttc",
+    "font_size": 44,
+    "text": "感谢观看",
+    "duration": 2.5,
+    "fade_duration": 0.6,
+    "background_color": [20, 20, 30]
+  }
+}

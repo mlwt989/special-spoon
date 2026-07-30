@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# 用户上传和生成的文件
+uploads/
+outputs/
+fonts/
+watermarks/
+
+# 日志和临时文件
+*.log
+*.tmp

@@ -1,0 +1,46 @@
+{
+  "name": "产品宣传",
+  "description": "竖屏 9:16 · 快节奏 · 适合产品展示/公司宣传/活动推广",
+  "output": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "codec": "libx264",
+    "format": "mp4"
+  },
+  "video_track": {
+    "clip_duration_min": 3,
+    "clip_duration_max": 5,
+    "transition_duration": 0.4,
+    "transition_type": "crossfade"
+  },
+  "subtitle_track": {
+    "enabled": true,
+    "font": "C:/Windows/Fonts/msyh.ttc",
+    "font_size": 52,
+    "stroke_width": 3,
+    "max_width_ratio": 0.85
+  },
+  "title": {
+    "enabled": true,
+    "font": "C:/Windows/Fonts/msyhbd.ttc",
+    "font_size": 84,
+    "duration": 2.0,
+    "fade_duration": 0.5,
+    "background_color": [0, 0, 0]
+  },
+  "music": {
+    "volume": 0.5,
+    "fade_in": 0.5,
+    "fade_out": 1.5
+  },
+  "ending": {
+    "enabled": true,
+    "font": "C:/Windows/Fonts/msyhbd.ttc",
+    "font_size": 52,
+    "text": "关注我们 了解更多",
+    "duration": 2.5,
+    "fade_duration": 0.5,
+    "background_color": [0, 0, 0]
+  }
+}

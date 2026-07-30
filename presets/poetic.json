@@ -1,0 +1,46 @@
+{
+  "name": "诗意短片",
+  "description": "竖屏 9:16 · 低饱和色调 · 长镜头 · 交叉溶解 · 适合植物/风景/生活美学",
+  "output": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "codec": "libx264",
+    "format": "mp4"
+  },
+  "video_track": {
+    "clip_duration_min": 5,
+    "clip_duration_max": 8,
+    "transition_duration": 0.8,
+    "transition_type": "crossfade"
+  },
+  "subtitle_track": {
+    "enabled": true,
+    "font": "C:/Windows/Fonts/msyh.ttc",
+    "font_size": 56,
+    "stroke_width": 3,
+    "max_width_ratio": 0.82
+  },
+  "title": {
+    "enabled": true,
+    "font": "C:/Windows/Fonts/msyhbd.ttc",
+    "font_size": 72,
+    "duration": 2.5,
+    "fade_duration": 0.8,
+    "background_color": [15, 15, 20]
+  },
+  "music": {
+    "volume": 0.3,
+    "fade_in": 2.0,
+    "fade_out": 3.0
+  },
+  "ending": {
+    "enabled": true,
+    "font": "C:/Windows/Fonts/msyh.ttc",
+    "font_size": 44,
+    "text": "关注我们 了解更多",
+    "duration": 2.5,
+    "fade_duration": 0.8,
+    "background_color": [15, 15, 20]
+  }
+}

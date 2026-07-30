@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>视频剪辑工坊</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="page">
+
+    <!-- 左侧导航条 -->
+    <nav class="sidebar">
+      <div class="sidebar-logo">
+        <span class="logo-mark">HEYTEA</span>
+        <span class="logo-sub">VIDEO STUDIO</span>
+      </div>
+      <div class="sidebar-nav">
+        <div class="nav-item active">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>
+          <span>剪辑</span>
+        </div>
+      </div>
+      <div class="sidebar-status">
+        <span class="status-led"></span>
+        <span class="status-text">LOCAL</span>
+      </div>
+    </nav>
+
+    <!-- 主区域 -->
+    <div class="main-area">
+
+      <!-- 顶部 -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title">视频剪辑工坊</h1>
+          <p class="page-desc">投素材 · 选模板 · 一键出片</p>
+        </div>
+        <div class="topbar-right">
+          <span class="badge-line"></span>
+          <span class="badge-text">01 / WORKSPACE</span>
+        </div>
+      </header>
+
+      <!-- 内容区：不对称两栏 -->
+      <div class="workspace">
+
+        <!-- 左栏：素材 -->
+        <section class="panel panel-materials">
+          <div class="panel-label">
+            <span class="label-num">01</span>
+            <span class="label-text">MATERIALS</span>
+            <span id="materialCount" class="label-count" style="display:none">0</span>
+          </div>
+
+          <!-- 上传区 -->
+          <div id="dropZone" class="upload-zone">
+            <div class="upload-inner">
+              <svg class="upload-icon" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <p class="upload-title">拖拽素材到此处</p>
+              <p class="upload-hint">或点击选择文件</p>
+              <p class="upload-formats">MP4 · MOV · JPG · PNG · MP3 · WAV</p>
+            </div>
+            <input type="file" id="fileInput" multiple accept="video/*,image/*,audio/*" style="display:none">
+          </div>
+
+          <!-- 素材列表 -->
+          <div id="materialsList" class="materials-list"></div>
+
+          <button id="clearBtn" class="link-btn" onclick="clearMaterials()" style="display:none">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            清空全部
+          </button>
+        </section>
+
+        <!-- 右栏：配置 -->
+        <section class="panel panel-config">
+          <div class="panel-label">
+            <span class="label-num">02</span>
+            <span class="label-text">SETTINGS</span>
+          </div>
+
+          <div class="config-body">
+
+            <!-- 三栏并列：选择模板 | 自定义效果 | 上传参考视频 -->
+            <div class="style-zone">
+              <!-- 栏1：选择模板 -->
+              <div class="style-col">
+                <div class="style-col-header">
+                  <span class="style-col-num num">A</span>
+                  <span class="style-col-title">选择模板</span>
+                </div>
+                <div class="template-tabs">
+                  <button class="template-tab active" data-tab="preset" onclick="switchTemplateTab('preset')">预设模板</button>
+                  <button class="template-tab" data-tab="custom" onclick="switchTemplateTab('custom')">我的模板</button>
+                </div>
+                <div id="templateList" class="template-list">
+                  <div class="field-empty">加载中...</div>
+                </div>
+              </div>
+
+              <!-- 栏2：自定义效果 -->
+              <div class="style-col">
+                <div class="style-col-header">
+                  <span class="style-col-num num">B</span>
+                  <span class="style-col-title">自定义效果</span>
+                </div>
+                <textarea id="customEffectInput" class="effect-textarea"
+                  placeholder="描述你想要的视频风格，例如：&#10;电影感、冷色调、快节奏剪辑&#10;日系清新、柔和暖色&#10;黑白复古、高对比度"
+                  rows="5"></textarea>
+                <div class="effect-tags">
+                  <button class="effect-tag" onclick="addEffectTag('电影感')">电影感</button>
+                  <button class="effect-tag" onclick="addEffectTag('冷色调')">冷色调</button>
+                  <button class="effect-tag" onclick="addEffectTag('暖色调')">暖色调</button>
+                  <button class="effect-tag" onclick="addEffectTag('快节奏')">快节奏</button>
+                  <button class="effect-tag" onclick="addEffectTag('黑白')">黑白</button>
+                  <button class="effect-tag" onclick="addEffectTag('柔和清新')">柔和清新</button>
+                  <button class="effect-tag" onclick="addEffectTag('复古')">复古</button>
+                  <button class="effect-tag" onclick="addEffectTag('赛博朋克')">赛博朋克</button>
+                </div>
+                <div class="effect-hint">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                  <span>与模板叠加生效，关键词驱动调色和节奏</span>
+                </div>
+              </div>
+
+              <!-- 栏3：上传参考视频提取模板 -->
+              <div class="style-col">
+                <div class="style-col-header">
+                  <span class="style-col-num num">C</span>
+                  <span class="style-col-title">提取模板</span>
+                </div>
+                <div id="refUploadZone" class="ref-upload-zone">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                  <p class="ref-upload-title">上传参考视频</p>
+                  <p class="ref-upload-hint">自动分析剪辑节奏并生成模板</p>
+                  <input type="file" id="refFileInput" accept="video/*" style="display:none">
+                </div>
+                <div id="refAnalysis" class="ref-analysis" style="display:none"></div>
+              </div>
+            </div>
+
+            <!-- 分隔线 -->
+            <div class="section-divider"></div>
+
+            <!-- 标题 -->
+            <div class="field">
+              <label class="field-label">标题 <span class="field-optional">可选</span></label>
+              <input type="text" id="titleInput" class="input" placeholder="视频标题，留空则无片头">
+            </div>
+
+            <!-- 字幕轨 -->
+            <div class="field">
+              <label class="field-label">
+                字幕轨
+                <span class="field-optional">独立于画面 · 按时间轴均匀分布</span>
+              </label>
+              <div class="field-note">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                <span>字幕与画面切换互不影响，各自独立运行</span>
+              </div>
+
+              <!-- 字幕字体 -->
+              <div class="font-options" id="fontOptions">
+                <button class="font-btn selected" data-font="C:/Windows/Fonts/msyh.ttc" data-font-name="微软雅黑" onclick="selectFont(this)">微软雅黑</button>
+                <button class="font-btn" data-font="C:/Windows/Fonts/msyhbd.ttc" data-font-name="雅黑粗体" onclick="selectFont(this)">雅黑粗体</button>
+                <button class="font-btn" data-font="C:/Windows/Fonts/simhei.ttf" data-font-name="黑体" onclick="selectFont(this)">黑体</button>
+                <button class="font-btn" data-font="C:/Windows/Fonts/simsun.ttc" data-font-name="宋体" onclick="selectFont(this)">宋体</button>
+                <button class="font-btn" data-font="C:/Windows/Fonts/simkai.ttf" data-font-name="楷体" onclick="selectFont(this)">楷体</button>
+                <button class="font-btn" data-font="C:/Windows/Fonts/simfang.ttf" data-font-name="仿宋" onclick="selectFont(this)">仿宋</button>
+                <button class="font-btn font-upload-btn" onclick="document.getElementById('fontFileInput').click()" title="上传自定义字体">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  上传字体
+                </button>
+                <input type="file" id="fontFileInput" accept=".ttf,.ttc,.otf,.woff,.woff2" style="display:none">
+              </div>
+              <!-- 已上传的自定义字体列表 -->
+              <div id="customFontList" class="custom-font-list" style="display:none"></div>
+
+              <!-- 字幕字号 -->
+              <div class="narration-row" style="margin-bottom:12px">
+                <span class="narration-row-label">字号</span>
+                <div class="speed-control">
+                  <input type="range" id="fontSize" class="speed-slider" min="24" max="120" step="2" value="56">
+                  <span class="speed-value num" id="fontSizeValue">56</span>
+                </div>
+              </div>
+
+              <div id="subtitleList" class="subtitle-list">
+                <p class="field-empty">点击下方按钮添加字幕行</p>
+              </div>
+              <button class="add-sub-btn" onclick="addSubtitle()">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                添加字幕
+              </button>
+            </div>
+
+            <!-- 片尾 -->
+            <div class="field">
+              <label class="field-label">片尾文字 <span class="field-optional">可选</span></label>
+              <input type="text" id="endingInput" class="input" placeholder="如：关注我们 了解更多">
+            </div>
+
+            <!-- 视频时长 -->
+            <div class="field">
+              <label class="field-label">视频时长 <span class="field-optional">可选 · 默认自动</span></label>
+              <div class="duration-options" id="durationOptions">
+                <button class="duration-btn selected" data-duration="0" onclick="selectDuration(this)">自动</button>
+                <button class="duration-btn" data-duration="15" onclick="selectDuration(this)">15s</button>
+                <button class="duration-btn" data-duration="30" onclick="selectDuration(this)">30s</button>
+                <button class="duration-btn" data-duration="60" onclick="selectDuration(this)">60s</button>
+                <button class="duration-btn" data-duration="90" onclick="selectDuration(this)">90s</button>
+                <div class="duration-custom">
+                  <input type="number" id="customDuration" class="duration-input" placeholder="自定义" min="5" max="600" step="1">
+                  <span class="duration-unit">秒</span>
+                </div>
+              </div>
+              <!-- 素材适配策略 -->
+              <div class="adapt-strategy" id="adaptStrategySection" style="display:none">
+                <label class="field-label" style="margin-top:10px">素材适配策略</label>
+                <select id="adaptStrategy" class="adapt-select" onchange="onAdaptStrategyChange()">
+                  <option value="smart">智能截取 — 按比例调整每段长度</option>
+                  <option value="speed">整体变速 — 保持内容不变，加快/放慢播放</option>
+                  <option value="manual">手动裁剪 — 自定义每个素材的起止时间</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- BGM -->
+            <div class="field">
+              <label class="field-label">背景音乐 <span class="field-optional">可选</span></label>
+              <div id="bgmStatus" class="bgm-box">
+                <span class="field-empty">上传音频文件时自动识别</span>
+              </div>
+            </div>
+
+            <!-- AI 配音 -->
+            <div class="field narration-field">
+              <div class="narration-header">
+                <label class="field-label" style="margin-bottom:0">AI 配音</label>
+                <label class="toggle-wrap">
+                  <input type="checkbox" id="narrationToggle">
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  <span class="toggle-label" id="narrationToggleLabel">关闭</span>
+                </label>
+              </div>
+
+              <div id="narrationSettings" class="narration-settings" style="display:none">
+                <div class="narration-row">
+                  <span class="narration-row-label">音色</span>
+                  <div class="voice-options" id="voiceOptions">
+                    <div class="voice-card selected" data-voice="zh-CN-XiaoxiaoNeural" onclick="selectVoice(this)">
+                      <span class="voice-name">温柔女声</span>
+                      <span class="voice-id">Xiaoxiao</span>
+                    </div>
+                    <div class="voice-card" data-voice="zh-CN-YunyangNeural" onclick="selectVoice(this)">
+                      <span class="voice-name">沉稳男声</span>
+                      <span class="voice-id">Yunyang</span>
+                    </div>
+                    <div class="voice-card" data-voice="zh-CN-XiaohanNeural" onclick="selectVoice(this)">
+                      <span class="voice-name">知性女声</span>
+                      <span class="voice-id">Xiaohan</span>
+                    </div>
+                    <div class="voice-card" data-voice="zh-CN-YunjianNeural" onclick="selectVoice(this)">
+                      <span class="voice-name">浑厚男声</span>
+                      <span class="voice-id">Yunjian</span>
+                    </div>
+                    <div class="voice-card" data-voice="zh-CN-XiaoqiuNeural" onclick="selectVoice(this)">
+                      <span class="voice-name">活泼女声</span>
+                      <span class="voice-id">Xiaoqiu</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="narration-row">
+                  <span class="narration-row-label">语速</span>
+                  <div class="speed-control">
+                    <input type="range" id="narrationRate" class="speed-slider" min="0.8" max="1.2" step="0.05" value="1.0">
+                    <span class="speed-value num" id="narrationRateValue">1.0x</span>
+                  </div>
+                </div>
+
+                <div class="narration-row">
+                  <span class="narration-row-label">配音音量</span>
+                  <div class="speed-control">
+                    <input type="range" id="narrationVolume" class="speed-slider" min="0" max="1" step="0.05" value="1.0">
+                    <span class="speed-value num" id="narrationVolumeValue">100%</span>
+                  </div>
+                </div>
+
+                <div class="narration-row">
+                  <span class="narration-row-label">BGM音量</span>
+                  <div class="speed-control">
+                    <input type="range" id="bgmVolume" class="speed-slider" min="0" max="1" step="0.05" value="0.3">
+                    <span class="speed-value num" id="bgmVolumeValue">30%</span>
+                  </div>
+                </div>
+
+                <div class="narration-hint">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                  <span>使用字幕文本作为配音脚本，AI 自动生成语音</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 水印 -->
+            <div class="field narration-field">
+              <div class="narration-header">
+                <label class="field-label" style="margin-bottom:0">水印 <span class="field-optional">可选 · 建议 PNG 透明底</span></label>
+                <button class="wm-upload-btn" onclick="document.getElementById('watermarkInput').click()">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  上传水印
+                </button>
+                <input type="file" id="watermarkInput" accept=".png,.jpg,.jpeg,.webp" style="display:none">
+              </div>
+
+              <div id="watermarkSettings" class="narration-settings" style="display:none">
+                <!-- 预览 + 删除 -->
+                <div class="wm-preview-row">
+                  <img id="watermarkPreview" class="wm-preview-img" alt="水印预览">
+                  <span class="wm-preview-name" id="watermarkName"></span>
+                  <button class="font-remove wm-remove" onclick="removeWatermark()" title="移除水印">&#10005;</button>
+                </div>
+
+                <!-- 位置九宫格 -->
+                <div class="narration-row">
+                  <span class="narration-row-label">位置</span>
+                  <div class="wm-pos-grid" id="wmPosGrid">
+                    <button class="wm-pos-btn" data-pos="top-left" onclick="selectWmPos(this)"></button>
+                    <button class="wm-pos-btn" data-pos="top-center" onclick="selectWmPos(this)"></button>
+                    <button class="wm-pos-btn" data-pos="top-right" onclick="selectWmPos(this)"></button>
+                    <button class="wm-pos-btn" data-pos="middle-left" onclick="selectWmPos(this)"></button>
+                    <button class="wm-pos-btn" data-pos="center" onclick="selectWmPos(this)"></button>
+                    <button class="wm-pos-btn" data-pos="middle-right" onclick="selectWmPos(this)"></button>
+                    <button class="wm-pos-btn" data-pos="bottom-left" onclick="selectWmPos(this)"></button>
+                    <button class="wm-pos-btn" data-pos="bottom-center" onclick="selectWmPos(this)"></button>
+                    <button class="wm-pos-btn selected" data-pos="bottom-right" onclick="selectWmPos(this)"></button>
+                  </div>
+                </div>
+
+                <!-- 动画 -->
+                <div class="narration-row">
+                  <span class="narration-row-label">动画</span>
+                  <div class="effect-tags" style="flex:1">
+                    <button class="effect-tag wm-anim-tag selected" data-anim="none" onclick="selectWmAnim(this)">无</button>
+                    <button class="effect-tag wm-anim-tag" data-anim="fade" onclick="selectWmAnim(this)">淡入淡出</button>
+                    <button class="effect-tag wm-anim-tag" data-anim="slide" onclick="selectWmAnim(this)">滑入</button>
+                    <button class="effect-tag wm-anim-tag" data-anim="pulse" onclick="selectWmAnim(this)">呼吸</button>
+                  </div>
+                </div>
+
+                <!-- 大小 -->
+                <div class="narration-row">
+                  <span class="narration-row-label">大小</span>
+                  <div class="speed-control">
+                    <input type="range" id="wmSize" class="speed-slider" min="5" max="40" step="1" value="15">
+                    <span class="speed-value num" id="wmSizeValue">15%</span>
+                  </div>
+                </div>
+
+                <!-- 不透明度 -->
+                <div class="narration-row">
+                  <span class="narration-row-label">透明度</span>
+                  <div class="speed-control">
+                    <input type="range" id="wmOpacity" class="speed-slider" min="10" max="100" step="5" value="90">
+                    <span class="speed-value num" id="wmOpacityValue">90%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 渲染按钮 -->
+          <button id="renderBtn" class="render-btn" disabled onclick="startRender()">
+            <span>开始剪辑</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+
+          <!-- 进度 -->
+          <div id="progressArea" class="progress-area" style="display:none">
+            <div class="progress-bar-track">
+              <div id="progressBar" class="progress-bar-fill" style="width:0%"></div>
+            </div>
+            <div class="progress-info">
+              <span id="progressText" class="progress-text">准备中...</span>
+              <span id="progressPct" class="progress-pct">0%</span>
+            </div>
+          </div>
+
+          <!-- 结果 -->
+          <div id="resultArea" class="result-area" style="display:none">
+            <div class="result-head">
+              <span class="result-tag">DONE</span>
+              <span class="result-text">剪辑完成</span>
+            </div>
+            <video id="previewVideo" controls playsinline class="preview-video"></video>
+            <div class="result-actions">
+              <a id="downloadLink" class="btn-primary" download>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                下载视频
+              </a>
+              <button class="btn-outline" onclick="resetAll()">剪新视频</button>
+            </div>
+
+            <!-- 导出选项 -->
+            <div class="export-options">
+              <span class="export-label">导出选项</span>
+              <div class="export-btns">
+                <button class="export-btn" onclick="exportResult('full')" title="视频+字幕+音频">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                  完整版
+                </button>
+                <button class="export-btn" onclick="exportResult('video_only')" title="仅视频画面，无字幕无音频">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+                  纯视频
+                </button>
+                <button class="export-btn" onclick="exportResult('subtitle')" title="下载 SRT 字幕文件">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                  仅字幕
+                </button>
+              </div>
+            </div>
+
+            <!-- 发布文案 -->
+            <div class="publish-copy-section">
+              <button id="copyBtn" class="btn-outline btn-copy" onclick="generatePublishCopy()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                生成发布文案
+              </button>
+              <div id="publishCopyArea" class="publish-copy-area" style="display:none">
+                <div class="publish-copy-header">
+                  <span class="publish-copy-title">发布文案</span>
+                  <button class="btn-copy-text" onclick="copyPublishText()">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    复制
+                  </button>
+                </div>
+                <textarea id="publishCopyText" class="publish-copy-text" rows="10" readonly></textarea>
+              </div>
+            </div>
+          </div>
+
+        </section>
+      </div>
+
+      <!-- 底部 -->
+      <footer class="footer">
+        <span>HEYTEA VIDEO STUDIO</span>
+        <span class="footer-line"></span>
+        <span>POWERED BY FFMEPG</span>
+      </footer>
+
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
