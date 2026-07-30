@@ -36,7 +36,9 @@ const state = {
   watermarkPos: 'bottom-right',
   watermarkAnim: 'none',
   watermarkSize: 15,
-  watermarkOpacity: 90
+  watermarkOpacity: 90,
+  // 最近一次渲染失败的技术详情（供开发者复制到剪贴板排查）
+  lastErrorDetail: null
 };
 
 // === 初始化 ===
@@ -90,13 +92,13 @@ function renderTemplates() {
   container.innerHTML = filtered.map(t => `
     <div class="template-card ${state.selectedTemplate === t.id ? 'selected' : ''}"
          onclick="selectTemplate('${t.id}')">
-      <div class="template-name">${t.name}</div>
-      <div class="template-desc">${t.description}</div>
+      <div class="template-name">${escapeHtml(t.name)}</div>
+      <div class="template-desc">${escapeHtml(t.description)}</div>
       <span class="template-aspect">${t.aspect}</span>
       ${t.id.startsWith('custom_') ? `
         <div class="template-card-actions" onclick="event.stopPropagation()">
-          <button class="template-action-btn" onclick="renameTemplate('${t.id}', '${t.name}')">重命名</button>
-          <button class="template-action-btn danger" onclick="deleteTemplate('${t.id}', '${t.name}')">删除</button>
+          <button class="template-action-btn" onclick="renameTemplate('${t.id}', '${escapeJsString(t.name)}')">重命名</button>
+          <button class="template-action-btn danger" onclick="deleteTemplate('${t.id}', '${escapeJsString(t.name)}')">删除</button>
         </div>
       ` : ''}
     </div>
@@ -701,13 +703,14 @@ async function handleFiles(fileList) {
     <svg class="upload-icon" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" style="animation: spin 1s linear infinite">
       <path d="M21 12a9 9 0 1 1-6.219-8.56" stroke-linecap="round"/>
     </svg>
-    <p class="upload-title">上传中...</p>
-    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+    <p class="upload-title">上传中... <span class="upload-pct">0%</span></p>
   `;
 
   try {
-    const res = await fetch('/api/upload', { method: 'POST', body: formData });
-    const data = await res.json();
+    const data = await uploadWithProgress(formData, (pct) => {
+      const t = uploadInner.querySelector('.upload-pct');
+      if (t) t.textContent = pct + '%';
+    });
 
     data.files.forEach(f => {
       if (!state.materials.find(m => m.name === f.name)) {
@@ -728,6 +731,49 @@ async function handleFiles(fileList) {
   } finally {
     uploadInner.innerHTML = originalHTML;
   }
+}
+
+// 带真实上传进度 + 5 分钟超时保护的上传（fetch 拿不到 upload.onprogress）
+function uploadWithProgress(formData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const timeoutId = setTimeout(() => xhr.abort(), 300000);
+    xhr.open('POST', '/api/upload');
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round(e.loaded / e.total * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      clearTimeout(timeoutId);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch (err) {
+          reject(new Error('服务器响应解析失败'));
+        }
+      } else {
+        let msg = '上传失败 (HTTP ' + xhr.status + ')';
+        try {
+          const j = JSON.parse(xhr.responseText);
+          if (j && j.error) msg = j.error;
+        } catch (_) { /* ignore */ }
+        reject(new Error(msg));
+      }
+    };
+    xhr.onerror = () => {
+      clearTimeout(timeoutId);
+      reject(new Error('网络错误，上传失败'));
+    };
+    xhr.onabort = () => {
+      clearTimeout(timeoutId);
+      reject(new Error('上传超时（5 分钟），请检查网络后重试'));
+    };
+
+    xhr.send(formData);
+  });
 }
 
 // === 素材列表（视频轨）===
@@ -869,7 +915,7 @@ function renderSubtitles() {
       <span class="subtitle-num num">${String(i + 1).padStart(2, '0')}</span>
       <input type="text" class="subtitle-input"
              placeholder="第 ${i + 1} 行字幕"
-             value="${text}"
+             value="${escapeHtml(text)}"
              oninput="updateSubtitle(${i}, this.value)">
       <button class="sub-remove" onclick="removeSubtitle(${i})">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -910,7 +956,7 @@ async function startRender() {
   const resultArea = document.getElementById('resultArea');
 
   btn.disabled = true;
-  btn.innerHTML = '<span>剪辑中</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56" stroke-linecap="round"/></svg><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
+  btn.innerHTML = '<span>剪辑中</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56" stroke-linecap="round"/></svg>';
   progressArea.style.display = 'block';
   resultArea.style.display = 'none';
 
@@ -975,11 +1021,24 @@ function resetBtn() {
 function pollProgress() {
   if (state.pollTimer) clearInterval(state.pollTimer);
 
-  let lastProgress = -1;
-  let stuckCount = 0;  // 进度停滞计数
-  const maxStuck = 90;  // 90 次 = 90 秒无进度变化 = 卡死
+  // 停滞判断改为"网络连续失败"，不再用进度数值判断。
+  // 原因：二叉合并 N 段时某整数百分比可能真实停留 >90s，旧逻辑会误判
+  // "超时"并停止轮询，导致错过真正的 done 状态（服务器其实还在跑）。
+  let failCount = 0;     // 连续网络/解析失败计数
+  const maxFail = 30;    // 连续 30 次无成功响应（≈30s）= 真卡死
+  const maxWait = 1200;  // 最多轮询 20 分钟，避免极端情况下永不停止
+  let ticks = 0;
 
   state.pollTimer = setInterval(async () => {
+    ticks++;
+    if (ticks > maxWait) {
+      clearInterval(state.pollTimer);
+      showToast('渲染时间过长，已停止轮询；可刷新页面或重新渲染');
+      resetBtn();
+      return;
+    }
+
+    let data;
     try {
       const res = await fetch(`/api/status/${state.renderTaskId}`);
 
@@ -991,50 +1050,96 @@ function pollProgress() {
         return;
       }
 
-      const data = await res.json();
-
-      // 任务不存在
-      if (data.error) {
-        clearInterval(state.pollTimer);
-        showToast('任务不存在: ' + data.error);
-        resetBtn();
-        return;
-      }
-
-      const bar = document.getElementById('progressBar');
-      const text = document.getElementById('progressText');
-      const pct = document.getElementById('progressPct');
-
-      bar.style.width = data.progress + '%';
-      text.textContent = data.message;
-      pct.textContent = data.progress + '%';
-
-      // 进度停滞检测
-      if (data.progress === lastProgress) {
-        stuckCount++;
-        if (stuckCount >= maxStuck) {
-          clearInterval(state.pollTimer);
-          showToast('渲染超时（进度停滞超过 90 秒），请重试');
-          resetBtn();
-          return;
-        }
-      } else {
-        stuckCount = 0;
-        lastProgress = data.progress;
-      }
-
-      if (data.status === 'done') {
-        clearInterval(state.pollTimer);
-        showResult();
-      } else if (data.status === 'error') {
-        clearInterval(state.pollTimer);
-        showToast('渲染失败: ' + (data.error || '未知错误'));
-        resetBtn();
-      }
+      data = await res.json();
     } catch (e) {
-      // 网络错误，继续轮询
+      // 网络抖动：单次失败继续轮询，连续失败才判定卡死
+      failCount++;
+      if (failCount >= maxFail) {
+        clearInterval(state.pollTimer);
+        showToast('网络中断或服务器无响应，请检查连接后重新渲染');
+        resetBtn();
+      }
+      return;
+    }
+
+    failCount = 0; // 成功响应，重置失败计数
+
+    // 任务不存在
+    if (data.error) {
+      clearInterval(state.pollTimer);
+      showToast('任务不存在: ' + data.error);
+      resetBtn();
+      return;
+    }
+
+    const bar = document.getElementById('progressBar');
+    const text = document.getElementById('progressText');
+    const pct = document.getElementById('progressPct');
+
+    bar.style.width = data.progress + '%';
+    text.textContent = data.message;
+    pct.textContent = data.progress + '%';
+
+    if (data.status === 'done') {
+      clearInterval(state.pollTimer);
+      showResult();
+    } else if (data.status === 'error') {
+      // 后端已把真实 FFmpeg 报错存进 error_detail，前端完整透传
+      showRenderError(data);
     }
   }, 1000);
+}
+
+function escapeHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// 仅用于内联 JS 字符串字面量参数（如 onclick="fn('...')"）。
+// 注意：不能用 escapeHtml（HTML 实体会被解码回引号导致 JS 串提前闭合），
+// 必须用反斜杠转义。
+function escapeJsString(s) {
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r');
+}
+
+// 渲染失败：展示友好信息 + 可复制的技术详情（呼应后端 error_detail 透传）
+function showRenderError(data) {
+  state.lastErrorDetail = data.error_detail || data.error || '';
+  const area = document.getElementById('progressArea');
+  area.innerHTML = `
+    <div class="render-error">
+      <div class="render-error-title">渲染失败</div>
+      <div class="render-error-msg">${escapeHtml(data.error || '未知错误')}</div>
+      ${state.lastErrorDetail ? `
+      <details class="render-error-detail">
+        <summary>查看技术详情（供开发者排查）</summary>
+        <pre>${escapeHtml(state.lastErrorDetail)}</pre>
+      </details>
+      <button type="button" class="render-error-copy" onclick="copyErrorDetail()">复制错误详情</button>
+      ` : ''}
+    </div>
+  `;
+  resetBtn();
+}
+
+function copyErrorDetail() {
+  if (!state.lastErrorDetail) return;
+  const done = () => showToast('错误详情已复制到剪贴板');
+  const fail = () => showToast('复制失败，请手动选择文本');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(state.lastErrorDetail).then(done).catch(fail);
+  } else {
+    fail();
+  }
 }
 
 function showResult() {
