@@ -316,6 +316,7 @@ class VideoRenderer:
             raise ValueError("没有视频或图片素材")
 
         tmp_dir = tempfile.mkdtemp(prefix="webrender_")
+        self._tmp_dir = tmp_dir
 
         try:
             # === Phase 1: 构建视频轨 ===
@@ -654,10 +655,14 @@ class VideoRenderer:
         max_width_ratio = sub_cfg.get("max_width_ratio", 0.85)
 
         num_subs = len(self.subtitles)
+        if num_subs == 0:
+            return video_path
         slot_dur = total_duration / num_subs
 
-        # 生成每条字幕的 PNG
-        sub_entries = []
+        # 逐条叠加：每次只 2 个输入（当前视频 + 1 条字幕），内存有界。
+        # 原先把 N 个 -loop 1 无限图片输入一次性塞进同一条 filtergraph，
+        # 字幕多时所有无限流被缓冲导致 OOM（Cannot allocate memory）。
+        current = video_path
         for idx, text in enumerate(self.subtitles):
             png_path = os.path.join(tmp_dir, f"sub_{idx:03d}.png")
             make_text_png(
@@ -666,44 +671,31 @@ class VideoRenderer:
             )
             start = idx * slot_dur
             end = (idx + 1) * slot_dur
-            sub_entries.append((png_path, start, end))
             self._progress(
                 45 + int(idx / max(num_subs, 1) * 35),
                 f"字幕 {idx+1}/{num_subs}: \"{text[:20]}...\" @ {start:.1f}s-{end:.1f}s"
             )
+            # 最后一条直接输出最终结果，其余输出中间累加文件
+            if idx == num_subs - 1:
+                output_path = os.path.join(tmp_dir, "with_subs.mp4")
+            else:
+                output_path = os.path.join(tmp_dir, f"subs_acc_{idx:03d}.mp4")
+            run_ffmpeg([
+                '-i', current,
+                '-loop', '1', '-framerate', str(fps), '-i', png_path,
+                '-filter_complex',
+                f"[0:v][1:v]overlay=0:0:"
+                f"enable='between(t,{start:.3f},{end:.3f})'[vout]",
+                '-map', '[vout]',
+                '-c:v', 'libx264', '-preset', 'fast',
+                '-pix_fmt', 'yuv420p',
+                '-t', f'{total_duration:.3f}',
+                '-threads', '1',
+                output_path
+            ])
+            current = output_path
 
-        # 构建 FFmpeg 命令：视频 + N 个字幕 PNG 输入
-        inputs = ['-i', video_path]
-        for png, _, _ in sub_entries:
-            inputs.extend(['-loop', '1', '-framerate', str(fps), '-i', png])
-
-        # filter_complex：链式 overlay，每条字幕在指定时间段可见
-        filter_parts = []
-        prev_label = "[0:v]"
-
-        for idx, (png, start, end) in enumerate(sub_entries):
-            input_idx = idx + 1
-            out_label = "[vout]" if idx == num_subs - 1 else f"[v{idx}]"
-            filter_parts.append(
-                f"{prev_label}[{input_idx}:v]overlay=0:0:"
-                f"enable='between(t,{start:.3f},{end:.3f})'{out_label}"
-            )
-            prev_label = out_label
-
-        filter_complex = ";".join(filter_parts)
-        output_path = os.path.join(tmp_dir, "with_subs.mp4")
-
-        run_ffmpeg(inputs + [
-            '-filter_complex', filter_complex,
-            '-map', '[vout]',
-            '-c:v', 'libx264', '-preset', 'fast',
-            '-pix_fmt', 'yuv420p',
-            '-t', f'{total_duration:.3f}',
-            '-threads', '1',
-            output_path
-        ])
-
-        return output_path
+        return current
 
     # =================================================================
     # Phase 2.5: 水印 overlay — 位置 / 大小 / 透明度 / 动画
@@ -986,35 +978,70 @@ class VideoRenderer:
         safe_remove(png_path)
 
     def _concatenate(self, clips, durations, output_path, transition_dur):
-        """xfade 链式拼接"""
+        """
+        xfade 拼接 —— 采用二叉两两合并（递归），避免把 N 个输入一次性塞进
+        一条超长 filtergraph 导致 FFmpeg 缓冲所有帧而内存爆炸（OOM / "Cannot
+        allocate memory"）。每次 xfade 只有 2 个输入，内存有界；合并层级为
+        log2(N)，总合并次数 N-1。每段合并后用实测时长计算下一层 offset，
+        同时消除时长漂移累积。
+        """
         if len(clips) == 1:
             run_ffmpeg(['-i', clips[0], '-c', 'copy', output_path])
             return
 
-        inputs = []
-        for clip in clips:
-            inputs.extend(['-i', clip])
+        tmp = getattr(self, '_tmp_dir', tempfile.mkdtemp(prefix="xfade_"))
+        _counter = {'n': 0}
 
-        filter_parts = []
-        cumulative = durations[0]
+        def _xfade2(a_path, a_dur, b_path, b_dur, out_path):
+            """两段交叉溶解；返回合并后视频的实际时长"""
+            # 保护：任一段短于转场则不溶解，退化为硬拼接（同参数可直接 concat）
+            if a_dur < transition_dur or b_dur < transition_dur:
+                run_ffmpeg([
+                    '-i', a_path, '-i', b_path,
+                    '-filter_complex',
+                    f"[0:v][1:v]concat=n=2:v=1:a=0[vout]",
+                    '-map', '[vout]',
+                    '-c:v', 'libx264', '-preset', 'fast',
+                    '-pix_fmt', 'yuv420p', '-threads', '1',
+                    out_path
+                ])
+                return get_duration(out_path)
 
-        for i in range(1, len(clips)):
-            offset = cumulative - transition_dur
-            input_a = "[0:v]" if i == 1 else f"[v{i-1}]"
-            input_b = f"[{i}:v]"
-            output_label = "[vout]" if i == len(clips) - 1 else f"[v{i}]"
-            filter_parts.append(
-                f"{input_a}{input_b}xfade=transition=fade:"
-                f"duration={transition_dur}:offset={offset:.2f}{output_label}"
-            )
-            cumulative += durations[i] - transition_dur
+            offset = max(0.0, a_dur - transition_dur)
+            run_ffmpeg([
+                '-i', a_path, '-i', b_path,
+                '-filter_complex',
+                f"[0:v][1:v]xfade=transition=fade:"
+                f"duration={transition_dur}:offset={offset:.3f}[vout]",
+                '-map', '[vout]',
+                '-c:v', 'libx264', '-preset', 'fast',
+                '-pix_fmt', 'yuv420p', '-threads', '1',
+                out_path
+            ])
+            return get_duration(out_path)
 
-        filter_complex = ";".join(filter_parts)
-        run_ffmpeg(inputs + [
-            '-filter_complex', filter_complex,
-            '-map', '[vout]',
-            '-c:v', 'libx264', '-preset', 'fast',
-            '-pix_fmt', 'yuv420p',
-            '-threads', '1',
-            output_path
-        ])
+        def _merge(paths, durs):
+            """递归二叉合并，返回 (最终路径, 实际时长)"""
+            if len(paths) == 1:
+                return paths[0], durs[0]
+            if len(paths) == 2:
+                out = os.path.join(tmp, f"xf_{_counter['n']:04d}.mp4")
+                _counter['n'] += 1
+                d = _xfade2(paths[0], durs[0], paths[1], durs[1], out)
+                safe_remove(paths[0])
+                safe_remove(paths[1])
+                return out, d
+            mid = len(paths) // 2
+            lp, ld = _merge(paths[:mid], durs[:mid])
+            rp, rd = _merge(paths[mid:], durs[mid:])
+            out = os.path.join(tmp, f"xf_{_counter['n']:04d}.mp4")
+            _counter['n'] += 1
+            d = _xfade2(lp, ld, rp, rd, out)
+            safe_remove(lp)
+            safe_remove(rp)
+            return out, d
+
+        final_path, _ = _merge(list(clips), list(durations))
+        if final_path != output_path:
+            run_ffmpeg(['-i', final_path, '-c', 'copy', output_path])
+            safe_remove(final_path)
