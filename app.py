@@ -12,12 +12,13 @@ import uuid
 import shutil
 import threading
 import subprocess
+import time
 from pathlib import Path
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory, after_this_request
 
 # 添加父目录到 path 以便 import renderer
 sys.path.insert(0, str(Path(__file__).parent))
-from renderer import VideoRenderer, get_file_type, get_duration
+from renderer import VideoRenderer, get_file_type, get_duration, safe_remove, run_ffmpeg
 
 BASE_DIR = Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -35,6 +36,47 @@ app.config['MAX_CONTENT_LENGTH'] = 2048 * 1024 * 1024  # 2GB
 
 # 全局任务状态
 tasks = {}
+
+# 任务保留策略：完成/失败后 30 分钟清理，最多保留 100 个，防止内存泄漏
+TASK_TTL_SECONDS = 30 * 60
+MAX_TASKS = 100
+
+
+def _extract_ffmpeg_error(err_str):
+    """从 FFmpeg 异常文本中提取对用户友好的简短错误原因。
+    完整 stderr 仍保留在 tasks[task_id]['error_detail'] 供前端/开发者排查。"""
+    s = err_str or ""
+    if 'Cannot allocate memory' in s or 'Error while filtering' in s:
+        return "渲染资源不足（内存不够），请减少素材数量或缩短视频后重试"
+    if 'TimeoutExpired' in s or 'timed out' in s.lower():
+        return "渲染超时，请减少素材数量后重试"
+    if 'Unrecognized' in s or 'Invalid' in s or 'No such file' in s or 'Error parsing' in s:
+        return "视频参数有误，请检查素材或重新选择模板后重试"
+    return "渲染失败，请稍后重试"
+
+
+def _purge_old_tasks():
+    """清理过期的已完成/失败任务及其输出文件，防止内存与磁盘泄漏。"""
+    now = time.time()
+    expired = [
+        tid for tid, t in tasks.items()
+        if t.get("status") in ("done", "error")
+        and (now - t.get("created_at", now)) > TASK_TTL_SECONDS
+    ]
+    # 容量上限：超出时丢弃最老的已完成任务
+    done_or_error = sorted(
+        [tid for tid, t in tasks.items() if t.get("status") in ("done", "error")],
+        key=lambda tid: tasks[tid].get("created_at", 0)
+    )
+    while len(tasks) - len(expired) > MAX_TASKS and done_or_error:
+        tid = done_or_error.pop(0)
+        if tid not in expired:
+            expired.append(tid)
+
+    for tid in expired:
+        t = tasks.pop(tid, None)
+        if t:
+            safe_remove(t.get("output_path"))
 
 
 @app.route('/')
@@ -142,6 +184,9 @@ def start_render():
     task_id = str(uuid.uuid4())[:8]
     output_path = str(OUTPUT_DIR / f'output_{task_id}.mp4')
 
+    # 清理过期任务，防止内存/磁盘泄漏（必须在新建任务前执行）
+    _purge_old_tasks()
+
     # 初始化任务状态
     tasks[task_id] = {
         "status": "rendering",
@@ -149,8 +194,10 @@ def start_render():
         "message": "准备中...",
         "output_path": output_path,
         "error": None,
+        "error_detail": None,
         "subtitles": sub_list,
-        "duration": 0
+        "duration": 0,
+        "created_at": time.time()
     }
 
     # 准备素材列表
@@ -206,12 +253,10 @@ def start_render():
             sys.stderr.write(f"\n[RENDER ERROR] Task {task_id}\n{tb}\n")
             sys.stderr.flush()
             tasks[task_id]["status"] = "error"
-            # 提供更友好的错误信息
             err_str = str(e)
-            if 'Errno 22' in err_str or 'Invalid argument' in err_str:
-                tasks[task_id]["error"] = "系统资源问题（管道创建失败），请关闭其他程序后重试"
-            else:
-                tasks[task_id]["error"] = err_str
+            # 给用户简短友好提示；完整 stderr 存 error_detail 供前端/开发者排查
+            tasks[task_id]["error"] = _extract_ffmpeg_error(err_str)
+            tasks[task_id]["error_detail"] = err_str
 
     thread = threading.Thread(target=render_thread, daemon=True)
     thread.start()
@@ -258,11 +303,13 @@ def analyze_reference_video(video_path):
     """
     import re
 
+    ffmpeg_exe = _get_ffmpeg()
+
     # 1. 基本信息：时长、分辨率、帧率
     # 用 ffprobe 快速读取头部，大文件也不会卡
     try:
         probe = subprocess.run(
-            [FFMPEG, '-analyzeduration', '0', '-probesize', '5000000',
+            [ffmpeg_exe, '-analyzeduration', '0', '-probesize', '5000000',
              '-i', video_path],
             capture_output=True, text=True, timeout=60
         )
@@ -307,7 +354,7 @@ def analyze_reference_video(video_path):
     # 策略：降低帧率到 5fps 减少解码量 + 只分析前 60 秒 + 单线程
     analyze_dur = min(duration, 60) if duration > 0 else 30
     scene_cmd = [
-        FFMPEG, '-y', '-hide_banner',
+        ffmpeg_exe, '-y', '-hide_banner',
         '-analyzeduration', '0', '-probesize', '5000000',
         '-i', video_path,
         '-t', str(analyze_dur),
@@ -668,10 +715,17 @@ def export_video_only(task_id):
             '-an',
             output_path
         ])
-        return send_file(output_path, as_attachment=True,
-                         download_name=f'video_only_{task_id}.mp4')
     except Exception as e:
         return jsonify({"error": f"导出失败: {str(e)}"}), 500
+
+    # 发送完成后清理临时导出文件，防止磁盘泄漏
+    @after_this_request
+    def _cleanup(resp):
+        safe_remove(output_path)
+        return resp
+
+    return send_file(output_path, as_attachment=True,
+                     download_name=f'video_only_{task_id}.mp4')
 
 
 @app.route('/api/export-subtitles/<task_id>')
@@ -709,6 +763,12 @@ def export_subtitles(task_id):
             f.write(f"{i + 1}\n")
             f.write(f"{fmt_time(start)} --> {fmt_time(end)}\n")
             f.write(f"{text}\n\n")
+
+    # 发送完成后清理临时字幕文件，防止磁盘泄漏
+    @after_this_request
+    def _cleanup(resp):
+        safe_remove(srt_path)
+        return resp
 
     return send_file(srt_path, as_attachment=True,
                      download_name=f'subtitles_{task_id}.srt')
