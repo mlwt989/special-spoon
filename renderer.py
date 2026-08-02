@@ -108,6 +108,48 @@ def get_duration(path):
     return 0.0
 
 
+def _detect_shot_boundaries(path, dur, threshold=0.3, analyze_cap=180):
+    """用 FFmpeg 镜头检测找出 [0, dur] 内的镜头切换时刻（不含 0 和 dur）。
+
+    返回升序的内部边界时间列表（秒）。检测失败或单镜头则返回空列表。
+    复用 analyze_reference_video 里已验证的 scene detection 命令，这里把它接进剪辑流水线。
+    """
+    if dur <= 0:
+        return []
+    window = min(dur, analyze_cap)
+    vf = f"fps=5,select=gt(scene\\,{threshold}),showinfo"
+    cmd = [
+        FFMPEG, '-hide_banner', '-analyzeduration', '0', '-probesize', '5000000',
+        '-i', str(path),
+        '-t', f'{window:.3f}',
+        '-vf', vf,
+        '-an', '-f', 'null', '-'
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            result = subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE, text=True, timeout=30)
+        except Exception:
+            return []
+    if not result.stderr:
+        return []
+    bounds = []
+    for line in result.stderr.split('\n'):
+        m = re.search(r'pts_time:(\d+\.?\d*)', line)
+        if m:
+            t = float(m.group(1))
+            if 0.0 < t < window - 0.05:
+                bounds.append(t)
+    # 去重 + 排序（镜头检测可能在同一帧附近报多个点）
+    cleaned = []
+    for t in sorted(bounds):
+        if not cleaned or t - cleaned[-1] > 0.2:
+            cleaned.append(t)
+    return cleaned
+
+
 def get_file_type(filename):
     ext = Path(filename).suffix.lower()
     if ext in VIDEO_EXTS:
@@ -391,6 +433,42 @@ class VideoRenderer:
     # Phase 1: 视频轨 — 素材按 5-8 秒切分长镜头，xfade 拼接
     # =================================================================
 
+    def _shot_aligned_segments(self, path, base_start, window, target_seg, min_frag=1.0):
+        """把 [base_start, base_start+window] 这段素材切成若干段，段与段之间只在镜头切换边界处断开。
+
+        返回 [(absolute_start, dur), ...]，总时长约等于 window。
+        这样「智能截取」就不会把一段连续说话/运镜从中间劈开。
+        """
+        boundaries = _detect_shot_boundaries(path, window, threshold=0.3)
+        cuts = sorted(set([0.0] + [b for b in boundaries if 0 < b < window] + [window]))
+
+        segs = []
+        acc_start = cuts[0]
+        acc_dur = 0.0
+        for k in range(1, len(cuts)):
+            shot_dur = cuts[k] - cuts[k - 1]
+            if acc_dur > 0 and acc_dur + shot_dur >= target_seg:
+                # 当前累积已达目标段长 → 在上一镜头边界处收尾，开新段
+                segs.append((base_start + acc_start, acc_dur))
+                acc_start = cuts[k - 1]
+                acc_dur = shot_dur
+            else:
+                acc_dur += shot_dur
+        if acc_dur > 0:
+            segs.append((base_start + acc_start, acc_dur))
+
+        # 合并过碎的片段（< min_frag），避免一堆 0.x 秒碎片
+        merged = []
+        for s in segs:
+            if merged and s[1] < min_frag:
+                merged[-1] = (merged[-1][0], merged[-1][1] + s[1])
+            else:
+                merged.append(s)
+        if len(merged) >= 2 and merged[0][1] < min_frag:
+            merged[1] = (merged[1][0], merged[0][1] + merged[1][1])
+            merged.pop(0)
+        return merged
+
     def _build_video_track(self, tmp_dir, target_w, target_h, fps, visual_materials):
         track_cfg = self.config.get("video_track", {})
         min_dur = track_cfg.get("clip_duration_min", 5)
@@ -481,31 +559,59 @@ class VideoRenderer:
                     allocated = actual_dur * scale
 
                 target_seg = (min_dur + max_dur) / 2
-                num_segs = max(1, round(allocated / target_seg))
-                seg_dur = allocated / num_segs
-                seg_dur = max(1.0, seg_dur)
 
-                for j in range(num_segs):
-                    if self.adapt_strategy == 'manual':
-                        # 手动模式：从裁剪区域开始计算
-                        seg_start = actual_start + j * (actual_dur / num_segs)
-                    else:
-                        seg_start = j * (full_dur / num_segs)
-
-                    seg_path = os.path.join(tmp_dir, f"seg_{len(segments):03d}.mp4")
-
-                    if self.adapt_strategy == 'speed' and speed_factor != 1.0:
-                        # 整体变速：先提取原始段，再调速
-                        self._process_video_segment_speed(
-                            mat["path"], seg_start, seg_dur, seg_path,
-                            target_w, target_h, fps, speed_factor
+                if self.adapt_strategy == 'smart':
+                    # 场景感知：只在镜头切换边界下刀，避免打断连续画面
+                    window = min(allocated, actual_dur)
+                    if window < target_seg * 1.1:
+                        # 素材比一段还短，无需切，整段用上
+                        seg_path = os.path.join(tmp_dir, f"seg_{len(segments):03d}.mp4")
+                        self._process_video_segment(
+                            mat["path"], actual_start, window, seg_path,
+                            target_w, target_h, fps
                         )
+                        segments.append((seg_path, window))
                     else:
+                        sub_segs = self._shot_aligned_segments(
+                            mat["path"], actual_start, window, target_seg
+                        )
+                        for (s_start, s_dur) in sub_segs:
+                            seg_path = os.path.join(tmp_dir, f"seg_{len(segments):03d}.mp4")
+                            self._process_video_segment(
+                                mat["path"], s_start, s_dur, seg_path,
+                                target_w, target_h, fps
+                            )
+                            segments.append((seg_path, s_dur))
+                elif self.adapt_strategy == 'speed':
+                    # 整体变速：按原时长均分后统一调速
+                    num_segs = max(1, round(allocated / target_seg))
+                    seg_dur = max(1.0, allocated / num_segs)
+                    for j in range(num_segs):
+                        seg_start = actual_start + j * (actual_dur / num_segs)
+                        seg_path = os.path.join(tmp_dir, f"seg_{len(segments):03d}.mp4")
+                        if speed_factor != 1.0:
+                            self._process_video_segment_speed(
+                                mat["path"], seg_start, seg_dur, seg_path,
+                                target_w, target_h, fps, speed_factor
+                            )
+                        else:
+                            self._process_video_segment(
+                                mat["path"], seg_start, seg_dur, seg_path,
+                                target_w, target_h, fps
+                            )
+                        segments.append((seg_path, seg_dur))
+                else:
+                    # 手动裁剪：从裁剪区域均分
+                    num_segs = max(1, round(allocated / target_seg))
+                    seg_dur = max(1.0, allocated / num_segs)
+                    for j in range(num_segs):
+                        seg_start = actual_start + j * (actual_dur / num_segs)
+                        seg_path = os.path.join(tmp_dir, f"seg_{len(segments):03d}.mp4")
                         self._process_video_segment(
                             mat["path"], seg_start, seg_dur, seg_path,
                             target_w, target_h, fps
                         )
-                    segments.append((seg_path, seg_dur))
+                        segments.append((seg_path, seg_dur))
             else:
                 if self.adapt_strategy == 'speed':
                     seg_dur = mat_durations[i] / speed_factor
