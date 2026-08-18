@@ -7,9 +7,11 @@
 
 import os
 import sys
+import io
 import json
 import uuid
 import shutil
+import zipfile
 import threading
 import subprocess
 import time
@@ -19,6 +21,7 @@ from flask import Flask, request, jsonify, send_file, send_from_directory, after
 # 添加父目录到 path 以便 import renderer
 sys.path.insert(0, str(Path(__file__).parent))
 from renderer import VideoRenderer, get_file_type, get_duration, safe_remove, run_ffmpeg
+from splitter import split_video_by_scenes
 
 BASE_DIR = Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -77,11 +80,21 @@ def _purge_old_tasks():
         t = tasks.pop(tid, None)
         if t:
             safe_remove(t.get("output_path"))
+            # 拆解任务：清理整个输出目录（多文件）
+            out_dir = t.get("output_dir")
+            if out_dir:
+                shutil.rmtree(out_dir, ignore_errors=True)
 
 
 @app.route('/')
 def index():
     return send_from_directory(str(STATIC_DIR), 'index.html')
+
+
+@app.route('/split')
+def split_page():
+    """视频拆解工具 - 独立页面，与剪辑页分开"""
+    return send_from_directory(str(STATIC_DIR), 'split.html')
 
 
 @app.route('/api/templates')
@@ -772,6 +785,168 @@ def export_subtitles(task_id):
 
     return send_file(srt_path, as_attachment=True,
                      download_name=f'subtitles_{task_id}.srt')
+
+
+# =================================================================
+# 视频拆解工具 - 把成品视频按镜头切换拆成多个素材
+# =================================================================
+
+SPLIT_DIR = BASE_DIR / "splits"
+SPLIT_DIR.mkdir(exist_ok=True)
+
+
+@app.route('/api/split', methods=['POST'])
+def start_split():
+    """上传成品视频，后台按镜头切换拆成多个素材片段"""
+    if 'file' not in request.files:
+        return jsonify({"error": "没有文件"}), 400
+
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({"error": "文件名为空"}), 400
+    if get_file_type(f.filename) != 'video':
+        return jsonify({"error": "只支持视频文件"}), 400
+
+    threshold = float(request.form.get('threshold', 0.3))
+    min_seg = float(request.form.get('min_seg', 1.0))
+    mode = request.form.get('mode', 'precise')
+    if mode not in ('copy', 'precise'):
+        mode = 'precise'
+    threshold = min(1.0, max(0.1, threshold))
+    min_seg = min(10.0, max(0.3, min_seg))
+
+    _purge_old_tasks()
+
+    task_id = str(uuid.uuid4())[:8]
+    task_dir = SPLIT_DIR / task_id
+    task_dir.mkdir(exist_ok=True)
+
+    # 保存上传的视频
+    src_path = task_dir / f"source_{Path(f.filename).name}"
+    f.save(str(src_path))
+    if not src_path.exists() or src_path.stat().st_size < 1024:
+        shutil.rmtree(task_dir, ignore_errors=True)
+        return jsonify({"error": "文件上传失败或文件无效"}), 400
+
+    out_dir = task_dir / "clips"
+
+    tasks[task_id] = {
+        "kind": "split",
+        "status": "processing",
+        "progress": 0,
+        "message": "准备中...",
+        "segments": [],
+        "output_dir": str(task_dir),
+        "source_name": f.filename,
+        "error": None,
+        "error_detail": None,
+        "created_at": time.time()
+    }
+
+    def split_thread():
+        try:
+            def progress_cb(percent, message):
+                tasks[task_id]["progress"] = percent
+                tasks[task_id]["message"] = message
+
+            segs = split_video_by_scenes(
+                str(src_path), str(out_dir),
+                threshold=threshold, min_seg=min_seg, mode=mode,
+                progress_cb=progress_cb
+            )
+            # 只保留相对路径信息供下载，不暴露服务器绝对路径
+            tasks[task_id]["segments"] = [
+                {
+                    "index": s["index"],
+                    "start": s["start"],
+                    "end": s["end"],
+                    "dur": s["dur"],
+                    "name": Path(s["path"]).name,
+                    "size": Path(s["path"]).stat().st_size
+                }
+                for s in segs
+            ]
+            tasks[task_id]["status"] = "done"
+            tasks[task_id]["progress"] = 100
+            tasks[task_id]["message"] = f"拆解完成，共 {len(segs)} 段"
+            # 上传的原文件不再需要，删除省空间
+            safe_remove(src_path)
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            sys.stderr.write(f"\n[SPLIT ERROR] Task {task_id}\n{tb}\n")
+            sys.stderr.flush()
+            tasks[task_id]["status"] = "error"
+            tasks[task_id]["error"] = "拆解失败，请检查视频是否正常后重试"
+            tasks[task_id]["error_detail"] = str(e)
+
+    thread = threading.Thread(target=split_thread, daemon=True)
+    thread.start()
+
+    return jsonify({"task_id": task_id})
+
+
+@app.route('/api/split/status/<task_id>')
+def split_status(task_id):
+    t = tasks.get(task_id)
+    if not t or t.get("kind") != "split":
+        return jsonify({"error": "任务不存在"}), 404
+    resp = {
+        "status": t["status"],
+        "progress": t.get("progress", 0),
+        "message": t.get("message", ""),
+        "segments": t.get("segments", []),
+        "source_name": t.get("source_name", ""),
+        "error": t.get("error"),
+        "error_detail": t.get("error_detail"),
+    }
+    return jsonify(resp)
+
+
+@app.route('/api/split/download/<task_id>/<int:index>')
+def split_download(task_id, index):
+    t = tasks.get(task_id)
+    if not t or t.get("kind") != "split":
+        return jsonify({"error": "任务不存在"}), 404
+    seg = next((s for s in t.get("segments", []) if s["index"] == index), None)
+    if not seg:
+        return jsonify({"error": "片段不存在"}), 404
+    seg_path = Path(t["output_dir"]) / "clips" / seg["name"]
+    if not seg_path.exists():
+        return jsonify({"error": "片段文件已清理"}), 404
+    return send_file(
+        str(seg_path), as_attachment=True,
+        download_name=f"clip_{index:03d}_{seg['name']}",
+        mimetype='video/mp4'
+    )
+
+
+@app.route('/api/split/zip/<task_id>')
+def split_zip(task_id):
+    """把拆出的所有片段打包成一个 zip 下载"""
+    t = tasks.get(task_id)
+    if not t or t.get("kind") != "split":
+        return jsonify({"error": "任务不存在"}), 404
+    segs = t.get("segments", [])
+    if not segs:
+        return jsonify({"error": "没有可下载的片段"}), 404
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for seg in segs:
+            seg_path = Path(t["output_dir"]) / "clips" / seg["name"]
+            if seg_path.exists():
+                zf.write(str(seg_path), arcname=f"clip_{seg['index']:03d}_{seg['name']}")
+    buf.seek(0)
+
+    import datetime
+    stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    zip_name = f"split_{stamp}.zip"
+    return send_file(
+        buf, as_attachment=True,
+        download_name=zip_name,
+        mimetype='application/zip'
+    )
 
 
 @app.route('/api/cleanup/<session_id>', methods=['POST'])
