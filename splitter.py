@@ -33,17 +33,20 @@ def get_duration(path):
     try:
         result = subprocess.run(
             [FFMPEG, '-i', str(path)],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, encoding='utf-8', errors='replace', timeout=30
         )
     except OSError:
         try:
             result = subprocess.run(
                 [FFMPEG, '-i', str(path)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                text=True, timeout=30
+                encoding='utf-8', errors='replace', timeout=30
             )
         except Exception:
             return 0.0
+    # 防御：Windows 下管道/编码异常可能导致 stderr 为 None
+    if not result or not result.stderr:
+        return 0.0
     for line in result.stderr.split('\n'):
         m = re.search(r'Duration:\s*(\d+):(\d+):(\d+\.\d+)', line)
         if m:
@@ -65,11 +68,11 @@ def _detect_scene_times(path, start, window, threshold=0.3):
         '-an', '-f', 'null', '-'
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace', timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         try:
             result = subprocess.run(cmd, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.PIPE, text=True, timeout=60)
+                                    stderr=subprocess.PIPE, encoding='utf-8', errors='replace', timeout=60)
         except Exception:
             return []
     if not result.stderr:
@@ -127,11 +130,11 @@ def detect_keyframes(path, dur):
         '-an', '-f', 'null', '-'
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace', timeout=120)
     except (OSError, subprocess.TimeoutExpired):
         try:
             result = subprocess.run(cmd, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.PIPE, text=True, timeout=120)
+                                    stderr=subprocess.PIPE, encoding='utf-8', errors='replace', timeout=120)
         except Exception:
             return []
     if not result.stderr:
@@ -198,11 +201,11 @@ def _build_cut_points(cut_points, dur, min_seg=1.0):
 def _run_ffmpeg(args, timeout=900):
     cmd = [FFMPEG, '-y', '-hide_banner', '-loglevel', 'warning'] + args
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace', timeout=timeout)
     except OSError:
         try:
             result = subprocess.run(cmd, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.PIPE, text=True, timeout=timeout)
+                                    stderr=subprocess.PIPE, encoding='utf-8', errors='replace', timeout=timeout)
         except OSError as e2:
             raise RuntimeError(f"FFmpeg subprocess failed: {e2}") from e2
     if result.returncode != 0:
