@@ -324,7 +324,7 @@ def analyze_reference_video(video_path):
         probe = subprocess.run(
             [ffmpeg_exe, '-analyzeduration', '0', '-probesize', '5000000',
              '-i', video_path],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, encoding='utf-8', errors='replace', timeout=60
         )
     except (OSError, subprocess.TimeoutExpired) as e:
         sys.stderr.write(f"[analyze] probe failed: {e}\n")
@@ -380,7 +380,7 @@ def analyze_reference_video(video_path):
     try:
         scene_result = subprocess.run(
             scene_cmd,
-            capture_output=True, text=True, timeout=300
+            capture_output=True, encoding='utf-8', errors='replace', timeout=300
         )
     except subprocess.TimeoutExpired:
         sys.stderr.write("[analyze] scene detection timed out, using defaults\n")
@@ -391,7 +391,7 @@ def analyze_reference_video(video_path):
             scene_result = subprocess.run(
                 scene_cmd,
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                text=True, timeout=300
+                encoding='utf-8', errors='replace', timeout=300
             )
         except Exception:
             scene_result = None
@@ -878,7 +878,7 @@ def start_split():
             sys.stderr.flush()
             tasks[task_id]["status"] = "error"
             tasks[task_id]["error"] = "拆解失败，请检查视频是否正常后重试"
-            tasks[task_id]["error_detail"] = str(e)
+            tasks[task_id]["error_detail"] = tb[-2000:]  # 完整堆栈便于排查
 
     thread = threading.Thread(target=split_thread, daemon=True)
     thread.start()
