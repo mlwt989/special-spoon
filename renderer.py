@@ -65,7 +65,10 @@ def run_ffmpeg(args, check=True, timeout=900):
     """运行 FFmpeg，所有 libx264 编码默认 -threads 1 避免多线程崩溃"""
     cmd = [FFMPEG, '-y', '-hide_banner', '-loglevel', 'warning'] + args
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        # encoding 固定 utf-8 + errors=replace：避免 bat/cmd 环境 locale 为
+        # GBK 时解码 FFmpeg stderr 里的中文路径抛 UnicodeDecodeError
+        result = subprocess.run(cmd, capture_output=True,
+                                encoding='utf-8', errors='replace', timeout=timeout)
     except OSError as e:
         # Windows 上 subprocess 管道创建可能失败 ([Errno 22] Invalid argument)
         # 重试一次，不带 capture_output
@@ -73,7 +76,8 @@ def run_ffmpeg(args, check=True, timeout=900):
         sys.stderr.flush()
         try:
             result = subprocess.run(cmd, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.PIPE, text=True, timeout=timeout)
+                                    stderr=subprocess.PIPE,
+                                    encoding='utf-8', errors='replace', timeout=timeout)
         except OSError as e2:
             raise RuntimeError(f"FFmpeg subprocess failed: {e2}") from e2
     if check and result.returncode != 0:
@@ -88,7 +92,7 @@ def get_duration(path):
     try:
         result = subprocess.run(
             [FFMPEG, '-i', str(path)],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, encoding='utf-8', errors='replace', timeout=30
         )
     except OSError:
         # Windows 管道创建失败时，退回到不用管道的方式
@@ -96,10 +100,13 @@ def get_duration(path):
             result = subprocess.run(
                 [FFMPEG, '-i', str(path)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                text=True, timeout=30
+                encoding='utf-8', errors='replace', timeout=30
             )
         except Exception:
             return 0.0
+    # 防御：Windows 下管道/编码异常可能导致 stderr 为 None
+    if not result or not result.stderr:
+        return 0.0
     for line in result.stderr.split('\n'):
         m = re.search(r'Duration:\s*(\d+):(\d+):(\d+\.\d+)', line)
         if m:
@@ -126,11 +133,11 @@ def _detect_shot_boundaries(path, dur, threshold=0.3, analyze_cap=180):
         '-an', '-f', 'null', '-'
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace', timeout=30)
     except (OSError, subprocess.TimeoutExpired):
         try:
             result = subprocess.run(cmd, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.PIPE, text=True, timeout=30)
+                                    stderr=subprocess.PIPE, encoding='utf-8', errors='replace', timeout=30)
         except Exception:
             return []
     if not result.stderr:
