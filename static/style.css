@@ -110,6 +110,7 @@ body {
   cursor: pointer;
   transition: var(--transition);
   position: relative;
+  text-decoration: none;
 }
 
 .nav-item:hover {
